@@ -1,4 +1,4 @@
-﻿CREATE TABLE "User" (
+﻿CREATE TABLE "Users" (
     "id" SERIAL PRIMARY KEY,
     "email" text NOT NULL,
     "username" text NOT NULL,
@@ -15,17 +15,23 @@
     )
 );
 
-CREATE TABLE "Event" (
+CREATE TABLE "Events" (
     "id" int   NOT NULL,
-    "event_name" text   NOT NULL,
-    "event_url" text   NOT NULL,
-    "info" text   NULL,
+    "event_name" text NOT NULL,
+    "event_url" text NOT NULL,
+    "info" text,
+    "venue_name" text,
+    "address" text,
+    "city" text,
+    "start_time" text NOT NULL,
+    "end_time" text NOT NULL,
+
     CONSTRAINT "pk_Event" PRIMARY KEY (
         "id"
      )
 );
 
-CREATE TABLE "RSVP" (
+CREATE TABLE "RSVPs" (
     "id" int   NOT NULL,
     "user_id" int   NOT NULL,
     "event_id" int   NOT NULL,

@@ -1,6 +1,6 @@
 from flask_bcrypt import Bcrypt
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+# from datetime import datetime
 
 bcrypt = Bcrypt()
 db = SQLAlchemy()
@@ -62,12 +62,21 @@ class User(db.Model):
     likes = db.relationship('Likes', backref='user', cascade="all, delete-orphan")
 
 class Event(db.Model):
+    """Events for users to browse, like, and/or RSVP"""
+    
     __tablename__ = "events"
 
-    id = db.Column( # id*
+    id = db.Column( # id
         db.Integer,
         primary_key=True,
         autoincrement=True
+    )
+
+    ticketmaster_id = db.Column( # ticketmaster's id for event
+        db.Text,
+        nullable=False,
+        unique=True,
+        index=True
     )
 
     event_name = db.Column( # name
@@ -88,21 +97,29 @@ class Event(db.Model):
 
     venue_name = db.Column( # venue -> location (maybe add venue model)
         db.Text,
-        nullable=False
+        nullable=True,
+        default =""
     )
 
     address = db.Column( # _embedded -> venues -> address
         db.Text,
-        nullable=False
+        nullable=True,
+        default=""
     )
-
+    
+    city = db.Column( # (maybe expand to state, country, etc.)
+        db.Text,
+        nullable=True,
+        default=""
+    ) 
+    
     # start and end times in datetime format
-    start_time = db.Column( # dates -> start 
+    start_datetime = db.Column( # dates -> start 
         db.DateTime,
         nullable=False
     )
 
-    end_time = db.Column( # dates -> end
+    end_datetime = db.Column( # dates -> end
         db.DateTime,
         nullable=True
     )
@@ -112,7 +129,7 @@ class Event(db.Model):
     
 
 class RSVP(db.Model):
-    """Let users RSVP an event"""
+    """Map users RSVP <-> event"""
 
     __tablename__ = 'rsvps'
 
@@ -126,7 +143,7 @@ class RSVP(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey('events.id', ondelete='CASCADE'), nullable=False)
     
 class Likes(db.Model):
-    """Let users like an event"""
+    """Map users like <-> event"""
 
     __tablename__ = 'likes'
 
