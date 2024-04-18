@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ event.event_name }}{% endblock %}
+    
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <img src="{{ event.image_url }}" class="card-img-top" alt="{{ event.event_name }}">
+                <div class="card-body">
+                    <h5 class="card-title">{{ event.event_name }}</h5>
+                    <p class="card-text">{{ event.info }}</p>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item"><strong>Venue:</strong> {{ event.venue_name }}</li>
+                    <li class="list-group-item"><strong>Address:</strong> {{ event.address }}, {{ event.city }}</li>
+                    
+                </ul>
+                <div class="card-body">
+                    <a href="{{ event.event_url }}" class="btn btn-primary" target="_blank">Buy Tickets</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

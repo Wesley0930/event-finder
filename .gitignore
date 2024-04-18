@@ -1,6 +1,9 @@
 config.py
 /node_modules
+/migrations/
 /__pycache__
+__pycache__/
 /venv
 /.venv
+
 

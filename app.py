@@ -5,10 +5,15 @@ import time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from config import API_TICKETMASTER_KEY
-from flask import Flask, jsonify, request, render_template, session
+from flask import Flask, abort, jsonify, g, redirect, request, render_template, session
 from flask_debugtoolbar import DebugToolbarExtension
+from flask_migrate import Migrate
+from forms import LoginForm, RegisterForm
 from models import db, connect_db, User, Event, RSVP, Likes
+from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import Unauthorized
+
+CURR_USER_KEY = "curr_user"
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql:///event_finder'
@@ -20,10 +25,7 @@ app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = False
 
 debug = DebugToolbarExtension(app) 
 connect_db(app)
-
-# Create scheduler instance
-scheduler = BackgroundScheduler()
-scheduler.configure(timezone="America/New_York")
+migrate = Migrate(app, db) # Flask Migrate
 
 # Ticketmaster API functions
 def get_ticketmaster_events():
@@ -49,29 +51,44 @@ def store_ticketmaster_events():
     - Calls get_ticketmaster_events() and create_event()    
     """
     events = get_ticketmaster_events()
-    for event_data in events:
-        create_event(event_data)
+    for event_data in events: # can zip events and add_all() instead
+        upsert_event(event_data)
+    db.session.commit()
     return
 
-def create_event(event_data):
-    """Create and store SQLAlchemy Event objects for PostgreSQL database"""
+def upsert_event(event_data):
+    """Create and store SQLAlchemy Event objects for PostgreSQL database
+    - OR update an existing event (usually start time changes from TBD)
+    """
     # Check if event already exists in database
     ticketmaster_id = event_data["id"]
     existing_event = Event.query.filter_by(ticketmaster_id=ticketmaster_id).first()
-    if not existing_event:
+    if existing_event:
+        # Update the existing event's properties
+        existing_event.event_name = event_data["event_name"]
+        existing_event.event_url = event_data["event_url"]
+        existing_event.info = event_data["info"]
+        existing_event.image_url = event_data["image_url"]
+        existing_event.address = event_data["address"]
+        existing_event.city = event_data["city"]
+        existing_event.venue_name = event_data["venue_name"]
+        existing_event.start_datetime = event_data["start_datetime"]
+        existing_event.end_datetime = event_data["end_datetime"]
+    else:
+        # Create a new event
         new_event = Event(
-            ticketmaster_id = event_data["id"], 
-            event_name = event_data["event_name"],
-            event_url = event_data["event_url"],
-            info = event_data["info"],
-            address = event_data["address"],
-            city = event_data["city"],
-            venue_name = event_data["venue_name"],
-            start_datetime = event_data["start_datetime"],
-            end_datetime = event_data["end_datetime"]
+            ticketmaster_id=ticketmaster_id,
+            event_name=event_data["event_name"],
+            event_url=event_data["event_url"],
+            info=event_data["info"],
+            image_url=event_data["image_url"],
+            address=event_data["address"],
+            city=event_data["city"],
+            venue_name=event_data["venue_name"],
+            start_datetime=event_data["start_datetime"],
+            end_datetime=event_data["end_datetime"]
         )
         db.session.add(new_event)
-        db.session.commit()
     return
 
 def get_and_store_events():
@@ -80,36 +97,107 @@ def get_and_store_events():
         store_ticketmaster_events()
     return
 
+# Create scheduler instance
+scheduler = BackgroundScheduler()
+scheduler.configure(timezone="America/New_York")
+
 # get ticketmaster events and save to DB
-# upsert (insert and update), if id exists just update it
-scheduler.add_job(get_and_store_events, trigger=IntervalTrigger(hours=1))
+# scheduler.add_job(get_and_store_events, trigger=IntervalTrigger(hours=1))
+scheduler.add_job(get_and_store_events, trigger=IntervalTrigger(minutes=20))
 scheduler.start()
 
-# @app.route("/api/ticketmaster/events", methods=["GET"])
-
-# @app.route("/api/ticketmaster/events/<event_id>", methods=["GET"])
-# def get_ticketmaster_event(event_id):
-#     """Retrieve details of a specific event from Ticketmaster API
-#     returns JSON of {"id", "event_name", "event_url", "info", "address", "venue_name", "start_datetime", "end_datetime"}
-#     """
-#     response = requests.get(f"https://app.ticketmaster.com/discovery/v2/events/{event_id}?apikey={API_TICKETMASTER_KEY}").json()
-#     return helpers.extract_event_details(response)
+@app.route("/api/ticketmaster/events/<event_id>", methods=["GET"])
+def get_ticketmaster_event(event_id):
+    """Retrieve details of a specific event from Ticketmaster API
+    returns JSON of {"id", "event_name", "event_url", "info", "address", "venue_name", "start_datetime", "end_datetime"}
+    """
+    response = requests.get(f"https://app.ticketmaster.com/discovery/v2/events/{event_id}?apikey={API_TICKETMASTER_KEY}").json()
+    return jsonify(helpers.extract_event_details(response))
     
-# Homepage routes 
-
+# Homepage
 @app.route("/", methods=["GET"])
 def homepage():
-    """Display homepage"""
-    return render_template("/homepage.html")
+    """Homepage: redirect to /events"""
+    return redirect("/events/events.html")
 
+# User login/logout
+@app.before_request
+def add_user_to_g():
+    """If logged in, add curr user to Flask global"""
+    if CURR_USER_KEY in session:
+        g.user = User.query.get(session[CURR_USER_KEY])
+    else:
+        g.user = None
+
+def do_login(user):
+    """Log in user"""
+    session[CURR_USER_KEY] = user.id
+
+def do_logout():
+    """Logout user"""
+    if CURR_USER_KEY in session:
+        del session[CURR_USER_KEY]
+
+# User signup
+@app.route('/signup', methods=["GET", "POST"])
+def signup():
+    """Handle user signup
+    - Create new user and add to PostgreSQL DB. Redirect to events page
+    - If form not valid, redisplay form (If there already is a user with that username, show error)
+    """
+    form = RegisterForm()
+    if form.validate_on_submit():
+        try:
+            user = User.signup(
+                username=form.username.data,
+                password=form.password.data,
+                first_name=form.first_name.data,
+                last_name=form.last_name.data,
+                email=form.email.data,
+                image_url=form.image_url.data or User.image_url.default.arg,
+            )
+            db.session.commit()
+        except IntegrityError:
+            # flash("Username already taken", 'danger')
+            return render_template('users/signup.html', form=form)
+        do_login(user)
+        return redirect("/")
+    else:
+        return render_template('users/signup.html', form=form)
+
+@app.route('/login', methods=["GET", "POST"])
+def login():
+    """Handle user login."""
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.authenticate(form.username.data,
+                                 form.password.data)
+        if user:
+            do_login(user)
+            # flash(f"Hello, {user.username}!", "success")
+            return redirect("/")
+        # flash("Invalid credentials.", 'danger')
+    return render_template('users/login.html', form=form)
+
+@app.route('/logout')
+def logout():
+    """Handle logout of user."""
+    do_logout()
+    # flash("You have been successfully logged out.", "success")
+    return redirect("/login")
 # Event routes
 
 @app.route("/events", methods=["GET"])
-def show_events():
+def show_all_events():
     """Display an all events page"""
     events = Event.query.all()
-    serialized = [helpers.serialize_event(event) for event in events]
-    return jsonify(events=serialized)
+    return render_template("/events/events.html", events=events)
+
+@app.route("/event/<int:event_id>")
+def show_event(event_id):
+    """Show details on specific event"""
+    event = Event.query.get_or_404(event_id)
+    return render_template("/events/event.html", event=event)
 
 # User profile routes
 @app.route("/user/<username>", methods=["GET"])
@@ -129,9 +217,14 @@ def create_new_user():
 
 @app.route("/api/events", methods=["GET"])
 def list_database_events():
-    """Fetch list of upcoming events from PostgreSQL database 
-    Users can input search filters for events
-    """
+    """Fetch list of upcoming events from PostgreSQL database"""
+    events = Event.query.all()
+    serialized = [helpers.serialize_event(event) for event in events]
+    return jsonify(events=serialized, rows=len(serialized))
+
+@app.route("/api/events", methods=["GET"])
+def search_database_events():
+    """Users can input search filters for events"""
     events = Event.query
     # query string parameters for filtering
     start_date = request.args.get("start_date")
@@ -157,13 +250,9 @@ def list_database_events():
     ]
     return render_template("events.html", events=events_data)
 
-@app.route("/api/events", methods=["GET"])
-def search_database_events():
-    """"""
-    return
-
 @app.route("/api/events/<event_id>", methods=["GET"])
 def get_database_event(event_id):
     """Retrieve details of a specific event from PostgreSQL database"""
     event = Event.query.get_or_404(event_id)
-    return render_template("event.html", event=event)
+    serialized = helpers.serialize_event(event)
+    return jsonify(events=serialized)

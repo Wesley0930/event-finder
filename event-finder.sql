@@ -20,6 +20,7 @@ CREATE TABLE "Events" (
     "event_name" text NOT NULL,
     "event_url" text NOT NULL,
     "info" text,
+    "image_url" text,
     "venue_name" text,
     "address" text,
     "city" text,

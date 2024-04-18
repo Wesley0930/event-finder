@@ -10,9 +10,11 @@ def serialize_event(event):
     """Serialize an Event SQLAlchemy obj to dictionary"""
     return {
         "id": event.id,
+        "ticketmaster_id" : event.ticketmaster_id,
         "event_name": event.event_name,
         "event_url": event.event_url,
         "info": event.info,
+        "image_url": event.image_url,
         "address": event.address,
         "city": event.city,
         "venue_name": event.venue_name,
@@ -36,6 +38,7 @@ def extract_event_details(response):
     event_name = response["name"]
     event_url = response["url"]
     info = response.get("info", "")
+    image_url = response["images"][0].get("url", "") # grab first image's url
     venue_data = response["_embedded"]["venues"][0] # list a single object element
     address = venue_data.get("address", {})
     line1 = address.get("line1", "") # combining 3 potential lines of address
@@ -47,23 +50,21 @@ def extract_event_details(response):
     venue_name = venue_data.get("name", "")
     start_dates = response["dates"].get("start")
     end_dates = response["dates"].get("end")
-    # start_date = start_dates.get("localDate", None)
-    # end_date = end_dates.get("localDate", None)
-    # start_time = start_dates.get("localTime", None)
-    # end_time = end_dates.get("localTime", None)
-    start_datetime_str = start_dates.get("dateTime", "")
+    start_datetime_str = start_dates.get("dateTime", "") if start_dates else None
     end_datetime_str = end_dates.get("dateTime", "") if end_dates else None
-    if start_datetime_str and end_datetime_str:
+    # set both to none. Typical for end_datetime to be null. If start_datetime is null, the event time is TBD
+    start_datetime = None
+    end_datetime = None 
+    if start_datetime_str:
         start_datetime = datetime.strptime(start_datetime_str, '%Y-%m-%dT%H:%M:%SZ')
+    if end_datetime_str:
         end_datetime = datetime.strptime(end_datetime_str, '%Y-%m-%dT%H:%M:%SZ')
-    else:
-        start_datetime = None
-        end_datetime = None # set to None in case there is no end_datetime (not going to be an issue for start_datetime probably)
     return {
             "id": id, 
             "event_name": event_name,
             "event_url": event_url,
             "info": info,
+            "image_url" : image_url,
             "address" : joined_address,
             "city" : city_name, 
             "venue_name": venue_name,
